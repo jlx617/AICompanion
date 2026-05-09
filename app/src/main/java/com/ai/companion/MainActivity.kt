@@ -25,13 +25,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private var isServiceRunning = false
 
-    private val requiredPermissions = mutableListOf(
+    private val requiredPermissions = arrayOf(
         Manifest.permission.RECORD_AUDIO
-    ).apply {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            add(Manifest.permission.POST_NOTIFICATIONS)
-        }
-    }.toTypedArray()
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

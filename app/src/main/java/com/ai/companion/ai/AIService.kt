@@ -20,7 +20,7 @@ class AIService(private val context: Context) {
         private const val KEY_PROVIDER = "api_provider"
         private const val KEY_API_KEY = "api_key"
 
-        private const val SILICONFLOW_URL = "https://api.siliconflow.cn/v1/chat/completions"
+        private const val SILICONFLOW_URL = "https://api.siliconflow.com/v1/chat/completions"
         private const val GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent"
         private const val DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
         private const val GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
