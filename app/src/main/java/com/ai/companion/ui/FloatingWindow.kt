@@ -95,7 +95,7 @@ class FloatingWindow(private val context: Context) {
                 }
                 else -> false
             }
-        })
+        }
 
         try {
             windowManager.addView(container, params)
