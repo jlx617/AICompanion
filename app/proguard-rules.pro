@@ -1,0 +1,2 @@
+-keep class com.ai.companion.** { *; }
+-dontwarn com.ai.companion.**
