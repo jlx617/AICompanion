@@ -26,7 +26,12 @@ class SettingsActivity : AppCompatActivity() {
     private lateinit var binding: ActivitySettingsBinding
     private val scope = CoroutineScope(Dispatchers.Main + Job())
 
-    private val providers = AIService.Provider.values().map { it.value }.toTypedArray()
+    private val providers = listOf(
+        "SiliconFlow (硅基流动)",
+        "DeepSeek",
+        "Google Gemini",
+        "Groq"
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,10 +56,8 @@ class SettingsActivity : AppCompatActivity() {
     private fun loadSettings() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
-        val providerValue = prefs.getString(KEY_PROVIDER, AIService.Provider.SILICONFLOW.value)
-            ?: AIService.Provider.SILICONFLOW.value
-        val providerIndex = providers.indexOf(providerValue)
-        if (providerIndex >= 0) {
+        val providerIndex = prefs.getInt(KEY_PROVIDER, 0)
+        if (providerIndex in providers.indices) {
             binding.spinnerProvider.setSelection(providerIndex)
         }
 
@@ -77,7 +80,7 @@ class SettingsActivity : AppCompatActivity() {
     private fun saveSettings() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         prefs.edit().apply {
-            putString(KEY_PROVIDER, binding.spinnerProvider.selectedItem?.toString())
+            putInt(KEY_PROVIDER, binding.spinnerProvider.selectedItemPosition)
             putString(KEY_API_KEY, binding.etApiKey.text?.toString()?.trim() ?: "")
             putBoolean(KEY_TTS_ENABLED, binding.switchTts.isChecked)
             putBoolean(KEY_FLOATING_WINDOW, binding.switchFloatingWindow.isChecked)
@@ -89,12 +92,12 @@ class SettingsActivity : AppCompatActivity() {
 
     private fun testConnection() {
         binding.btnTest.isEnabled = false
-        binding.btnTest.text = "Testing..."
+        binding.btnTest.text = getString(R.string.testing)
 
         scope.launch {
             val success = withContext(Dispatchers.IO) {
                 try {
-                    // Save settings first so AI service can read them
+                    // 先保存设置
                     saveSettings()
                     val aiService = AIService(this@SettingsActivity)
                     aiService.testConnection()
@@ -120,9 +123,5 @@ class SettingsActivity : AppCompatActivity() {
                 ).show()
             }
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
     }
 }

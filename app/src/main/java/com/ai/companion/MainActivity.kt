@@ -18,14 +18,15 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val PERMISSION_REQUEST_CODE = 100
+        private const val PREFS_NAME = "ai_companion_prefs"
+        private const val KEY_API_KEY = "api_key"
     }
 
     private lateinit var binding: ActivityMainBinding
     private var isServiceRunning = false
 
     private val requiredPermissions = mutableListOf(
-        Manifest.permission.RECORD_AUDIO,
-        Manifest.permission.ACCESS_FINE_LOCATION
+        Manifest.permission.RECORD_AUDIO
     ).apply {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             add(Manifest.permission.POST_NOTIFICATIONS)
@@ -38,7 +39,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         setupButtons()
-        checkPermissions()
+        updateUI()
     }
 
     private fun setupButtons() {
@@ -46,6 +47,13 @@ class MainActivity : AppCompatActivity() {
             if (isServiceRunning) {
                 stopService()
             } else {
+                // 检查API密钥是否已配置
+                if (!isApiKeyConfigured()) {
+                    Toast.makeText(this, R.string.api_key_not_configured, Toast.LENGTH_LONG).show()
+                    openSettings()
+                    return@setOnClickListener
+                }
+                
                 if (checkAndRequestPermissions()) {
                     startService()
                 }
@@ -61,9 +69,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun checkPermissions() {
+    private fun isApiKeyConfigured(): Boolean {
+        val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val apiKey = prefs.getString(KEY_API_KEY, "") ?: ""
+        return apiKey.isNotBlank()
+    }
+
+    private fun updateUI() {
         if (!hasAllPermissions()) {
             binding.tvInstructions.text = getString(R.string.permission_required)
+        } else if (!isApiKeyConfigured()) {
+            binding.tvInstructions.text = getString(R.string.api_key_not_configured)
+        } else {
+            binding.tvInstructions.text = getString(R.string.usage_instructions)
         }
     }
 
@@ -79,14 +97,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (missingPermissions.isEmpty()) {
-            // Check overlay permission
+            // 检查悬浮窗权限
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
                 val intent = Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                     Uri.parse("package:$packageName")
                 )
                 startActivityForResult(intent, PERMISSION_REQUEST_CODE + 1)
-                Toast.makeText(this, "Please grant overlay permission", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.please_grant_overlay_permission, Toast.LENGTH_LONG).show()
                 return false
             }
             return true
@@ -118,7 +136,7 @@ class MainActivity : AppCompatActivity() {
                     startService()
                 }
             } else {
-                Toast.makeText(this, "Permissions are required", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.permissions_required, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -129,7 +147,7 @@ class MainActivity : AppCompatActivity() {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && Settings.canDrawOverlays(this)) {
                 startService()
             } else {
-                Toast.makeText(this, "Overlay permission is required for floating window", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.overlay_permission_required, Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -138,15 +156,16 @@ class MainActivity : AppCompatActivity() {
         AICompanionService.start(this)
         isServiceRunning = true
         binding.btnStartStop.text = getString(R.string.stop_service)
-        binding.tvInstructions.text = getString(R.string.usage_instructions)
-        Toast.makeText(this, "Service started", Toast.LENGTH_SHORT).show()
+        binding.tvInstructions.text = getString(R.string.service_running)
+        Toast.makeText(this, R.string.service_started, Toast.LENGTH_SHORT).show()
     }
 
     private fun stopService() {
         AICompanionService.stop(this)
         isServiceRunning = false
         binding.btnStartStop.text = getString(R.string.start_service)
-        Toast.makeText(this, "Service stopped", Toast.LENGTH_SHORT).show()
+        binding.tvInstructions.text = getString(R.string.usage_instructions)
+        Toast.makeText(this, R.string.service_stopped, Toast.LENGTH_SHORT).show()
     }
 
     private fun openSettings() {
@@ -156,8 +175,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (!hasAllPermissions()) {
-            binding.tvInstructions.text = getString(R.string.permission_required)
-        }
+        updateUI()
     }
 }

@@ -26,11 +26,17 @@ class AIService(private val context: Context) {
         private const val GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
     }
 
-    enum class Provider(val value: String) {
-        SILICONFLOW("SiliconFlow"),
-        GOOGLE_GEMINI("Google Gemini"),
-        DEEPSEEK("DeepSeek"),
-        GROQ("Groq")
+    enum class Provider(val index: Int, val displayName: String, val model: String, val url: String) {
+        SILICONFLOW(0, "SiliconFlow", "Qwen/Qwen2.5-7B-Instruct", SILICONFLOW_URL),
+        DEEPSEEK(1, "DeepSeek", "deepseek-chat", DEEPSEEK_URL),
+        GOOGLE_GEMINI(2, "Google Gemini", "gemini-pro", GEMINI_URL),
+        GROQ(3, "Groq", "llama3-8b-8192", GROQ_URL);
+
+        companion object {
+            fun fromIndex(index: Int): Provider {
+                return values().find { it.index == index } ?: SILICONFLOW
+            }
+        }
     }
 
     private val client = OkHttpClient.Builder()
@@ -43,8 +49,8 @@ class AIService(private val context: Context) {
 
     private fun getProvider(): Provider {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val value = prefs.getString(KEY_PROVIDER, Provider.SILICONFLOW.value) ?: Provider.SILICONFLOW.value
-        return Provider.values().find { it.value == value } ?: Provider.SILICONFLOW
+        val index = prefs.getInt(KEY_PROVIDER, 0)
+        return Provider.fromIndex(index)
     }
 
     private fun getApiKey(): String {
@@ -80,30 +86,25 @@ class AIService(private val context: Context) {
     suspend fun transcribe(audioDataBase64: String): String = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
         if (apiKey.isBlank()) {
-            return@withContext "[No API key configured]"
+            return@withContext "[未配置API密钥]"
         }
 
-        // Use the chat API to process audio context
-        // In a real implementation, you would use a speech-to-text API
-        // This is a placeholder that sends audio context to the AI
         try {
             val provider = getProvider()
-            val prompt = "Transcribe the following audio data context. " +
-                "The audio is base64 encoded PCM 16kHz mono 16-bit. " +
-                "Provide a transcription of what was said."
+            val prompt = "请转录以下音频数据。音频为base64编码的PCM 16kHz单声道16位格式。"
 
             val request = buildChatRequest(provider, apiKey, listOf(
-                ChatMessage("system", "You are a speech-to-text transcription service."),
+                ChatMessage("system", "你是一个语音转文字服务。"),
                 ChatMessage("user", prompt)
             ))
 
             val response = client.newCall(request).execute()
-            val responseBody = response.body?.string() ?: return@withContext "[Empty response]"
+            val responseBody = response.body?.string() ?: return@withContext "[响应为空]"
 
             parseChatResponse(responseBody, provider)
         } catch (e: Exception) {
-            Log.e(TAG, "Transcription failed", e)
-            "[Transcription error: ${e.message}]"
+            Log.e(TAG, "转录失败", e)
+            "[转录错误: ${e.message}]"
         }
     }
 
@@ -113,7 +114,7 @@ class AIService(private val context: Context) {
     ): String = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
         if (apiKey.isBlank()) {
-            return@withContext "[No API key configured]"
+            return@withContext "[未配置API密钥，请在设置中配置]"
         }
 
         try {
@@ -122,18 +123,26 @@ class AIService(private val context: Context) {
 
             val messages = listOf(
                 ChatMessage("system", systemPrompt),
-                ChatMessage("user", "Based on this conversation: \"$transcript\", " +
-                    "provide a helpful, concise suggestion (max 2 sentences).")
+                ChatMessage("user", "根据这段对话内容: \"$transcript\"，请提供一个简洁有用的建议（最多2句话）。")
             )
+
+            Log.d(TAG, "请求AI: provider=${provider.displayName}, model=${provider.model}")
 
             val request = buildChatRequest(provider, apiKey, messages)
             val response = client.newCall(request).execute()
-            val responseBody = response.body?.string() ?: return@withContext "[Empty response]"
+            
+            if (!response.isSuccessful) {
+                val errorBody = response.body?.string() ?: "未知错误"
+                Log.e(TAG, "API请求失败: ${response.code} - $errorBody")
+                return@withContext "[API请求失败: ${response.code}]"
+            }
+            
+            val responseBody = response.body?.string() ?: return@withContext "[响应为空]"
 
             parseChatResponse(responseBody, provider)
         } catch (e: Exception) {
-            Log.e(TAG, "Suggestion generation failed", e)
-            "[Suggestion error: ${e.message}]"
+            Log.e(TAG, "建议生成失败", e)
+            "[生成错误: ${e.message}]"
         }
     }
 
@@ -144,20 +153,19 @@ class AIService(private val context: Context) {
         try {
             val provider = getProvider()
             val messages = listOf(
-                ChatMessage("user", "Say 'Connection successful' in one word.")
+                ChatMessage("user", "请回复'连接成功'")
             )
             val request = buildChatRequest(provider, apiKey, messages)
             val response = client.newCall(request).execute()
+            Log.d(TAG, "测试连接: ${response.isSuccessful}, code=${response.code}")
             response.isSuccessful
         } catch (e: Exception) {
-            Log.e(TAG, "Connection test failed", e)
+            Log.e(TAG, "连接测试失败", e)
             false
         }
     }
 
     private fun buildChatRequest(provider: Provider, apiKey: String, messages: List<ChatMessage>): Request {
-        val json = gson.toJson(messages)
-
         return when (provider) {
             Provider.GOOGLE_GEMINI -> {
                 val geminiBody = buildGeminiBody(messages)
@@ -168,22 +176,10 @@ class AIService(private val context: Context) {
                     .build()
             }
             else -> {
-                val model = when (provider) {
-                    Provider.SILICONFLOW -> "Qwen/Qwen2.5-7B-Instruct"
-                    Provider.DEEPSEEK -> "deepseek-chat"
-                    Provider.GROQ -> "llama3-8b-8192"
-                    Provider.GOOGLE_GEMINI -> "gemini-pro"
-                }
-                val chatRequest = ChatRequest(model = model, messages = messages)
+                val chatRequest = ChatRequest(model = provider.model, messages = messages)
                 val body = gson.toJson(chatRequest).toRequestBody("application/json".toMediaType())
-                val url = when (provider) {
-                    Provider.SILICONFLOW -> SILICONFLOW_URL
-                    Provider.DEEPSEEK -> DEEPSEEK_URL
-                    Provider.GROQ -> GROQ_URL
-                    Provider.GOOGLE_GEMINI -> GEMINI_URL
-                }
                 Request.Builder()
-                    .url(url)
+                    .url(provider.url)
                     .addHeader("Authorization", "Bearer $apiKey")
                     .addHeader("Content-Type", "application/json")
                     .post(body)
@@ -216,21 +212,20 @@ class AIService(private val context: Context) {
                 val content = firstCandidate?.get("content") as? Map<*, *>
                 val parts = content?.get("parts") as? List<*>
                 val firstPart = parts?.firstOrNull() as? Map<*, *>
-                firstPart?.get("text") as? String ?: "[No content in response]"
+                firstPart?.get("text") as? String ?: "[响应无内容]"
             } else {
                 val chatResponse = gson.fromJson(responseBody, ChatResponse::class.java)
-                chatResponse.choices?.firstOrNull()?.message?.content ?: "[No content in response]"
+                chatResponse.choices?.firstOrNull()?.message?.content ?: "[响应无内容]"
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse response: $responseBody", e)
-            "[Parse error]"
+            Log.e(TAG, "解析响应失败: $responseBody", e)
+            "[解析错误]"
         }
     }
 
     private fun buildSystemPrompt(sceneContext: String): String {
-        return "You are an AI conversation assistant. You listen to conversations through " +
-            "an earphone microphone and provide helpful, concise suggestions. " +
-            "Current scene context: $sceneContext. " +
-            "Keep responses brief (1-2 sentences max). Be helpful and relevant."
+        return "你是一个AI对话助手。你通过耳机麦克风聆听对话，并提供有帮助的、简洁的建议。" +
+            "当前场景: $sceneContext。" +
+            "请保持回复简短（最多1-2句话）。要有帮助且切题。请用中文回复。"
     }
 }

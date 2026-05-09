@@ -12,7 +12,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Settings"
+            android:text="@string/open_settings"
             android:textSize="24sp"
             android:textStyle="bold"
             android:textColor="@color/purple_500"
