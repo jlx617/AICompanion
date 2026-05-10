@@ -39,6 +39,12 @@ class AIService(private val context: Context) {
         }
     }
 
+    data class TestResult(
+        val success: Boolean,
+        val message: String,
+        val responseCode: Int = 0
+    )
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -146,22 +152,50 @@ class AIService(private val context: Context) {
         }
     }
 
-    suspend fun testConnection(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun testConnection(): TestResult = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
-        if (apiKey.isBlank()) return@withContext false
+        if (apiKey.isBlank()) {
+            return@withContext TestResult(false, "API密钥为空，请先输入密钥")
+        }
 
         try {
             val provider = getProvider()
+            Log.d(TAG, "测试连接: provider=${provider.displayName}, url=${provider.url}, model=${provider.model}")
+            
             val messages = listOf(
                 ChatMessage("user", "请回复'连接成功'")
             )
             val request = buildChatRequest(provider, apiKey, messages)
+            
             val response = client.newCall(request).execute()
-            Log.d(TAG, "测试连接: ${response.isSuccessful}, code=${response.code}")
-            response.isSuccessful
+            val responseCode = response.code
+            val responseBody = response.body?.string() ?: ""
+            
+            Log.d(TAG, "测试连接结果: success=${response.isSuccessful}, code=$responseCode")
+            
+            if (response.isSuccessful) {
+                TestResult(true, "连接成功", responseCode)
+            } else {
+                // 解析错误信息
+                val errorMsg = when (responseCode) {
+                    401 -> "API密钥无效或已过期，请检查密钥"
+                    403 -> "API密钥权限不足或无访问权限"
+                    429 -> "请求过于频繁，请稍后再试"
+                    500, 502, 503 -> "服务器错误，请稍后重试"
+                    else -> "连接失败: HTTP $responseCode"
+                }
+                Log.e(TAG, "连接失败详情: $responseBody")
+                TestResult(false, errorMsg, responseCode)
+            }
         } catch (e: Exception) {
             Log.e(TAG, "连接测试失败", e)
-            false
+            val errorMsg = when {
+                e.message?.contains("Unable to resolve host") == true -> "网络错误：无法连接到服务器，请检查网络"
+                e.message?.contains("SSL") == true -> "SSL证书错误"
+                e.message?.contains("timeout") == true -> "连接超时，请检查网络"
+                else -> "连接失败: ${e.message}"
+            }
+            TestResult(false, errorMsg, 0)
         }
     }
 

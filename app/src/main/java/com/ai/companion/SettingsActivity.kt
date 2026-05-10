@@ -1,8 +1,11 @@
 package com.ai.companion
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.widget.ArrayAdapter
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.ai.companion.ai.AIService
 import com.ai.companion.databinding.ActivitySettingsBinding
@@ -21,6 +24,10 @@ class SettingsActivity : AppCompatActivity() {
         private const val KEY_TTS_ENABLED = "tts_enabled"
         private const val KEY_FLOATING_WINDOW = "floating_window_enabled"
         private const val KEY_SCENE_DETECTION = "scene_detection_enabled"
+        
+        // 当前版本号，每次发布新版本时更新
+        const val CURRENT_VERSION = "1.0.3"
+        const val GITHUB_RELEASES_URL = "https://github.com/jlx617/AICompanion/releases"
     }
 
     private lateinit var binding: ActivitySettingsBinding
@@ -41,6 +48,7 @@ class SettingsActivity : AppCompatActivity() {
         setupSpinner()
         loadSettings()
         setupButtons()
+        checkForUpdate()
     }
 
     private fun setupSpinner() {
@@ -95,33 +103,71 @@ class SettingsActivity : AppCompatActivity() {
         binding.btnTest.text = getString(R.string.testing)
 
         scope.launch {
-            val success = withContext(Dispatchers.IO) {
+            // 先保存设置
+            saveSettings()
+            
+            val result = withContext(Dispatchers.IO) {
                 try {
-                    // 先保存设置
-                    saveSettings()
                     val aiService = AIService(this@SettingsActivity)
                     aiService.testConnection()
                 } catch (e: Exception) {
-                    false
+                    AIService.TestResult(false, "测试异常: ${e.message}")
                 }
             }
 
             binding.btnTest.isEnabled = true
             binding.btnTest.text = getString(R.string.test_connection)
 
-            if (success) {
+            // 显示详细结果
+            if (result.success) {
                 Toast.makeText(
                     this@SettingsActivity,
-                    R.string.connection_success,
+                    "✅ ${result.message}",
                     Toast.LENGTH_SHORT
                 ).show()
             } else {
-                Toast.makeText(
-                    this@SettingsActivity,
-                    R.string.connection_failed,
-                    Toast.LENGTH_SHORT
-                ).show()
+                // 失败时显示详细错误信息
+                AlertDialog.Builder(this@SettingsActivity)
+                    .setTitle("连接失败")
+                    .setMessage(result.message)
+                    .setPositiveButton("确定", null)
+                    .show()
             }
         }
+    }
+
+    private fun checkForUpdate() {
+        // 简化的版本检查，实际项目中可以从服务器获取最新版本
+        // 这里只是演示框架，每次打开设置页面检查
+        scope.launch {
+            try {
+                // 模拟从GitHub获取最新版本（实际应该调用API）
+                // 这里为了演示，假设有新版本
+                val hasUpdate = false // 实际应该通过网络请求获取
+                val latestVersion = "1.0.4" // 示例
+                
+                if (hasUpdate && latestVersion != CURRENT_VERSION) {
+                    showUpdateDialog(latestVersion)
+                }
+            } catch (e: Exception) {
+                // 忽略检查失败
+            }
+        }
+    }
+
+    private fun showUpdateDialog(latestVersion: String) {
+        AlertDialog.Builder(this)
+            .setTitle("发现新版本")
+            .setMessage("当前版本: $CURRENT_VERSION\n最新版本: $latestVersion\n\n建议更新以获得更好的体验。")
+            .setPositiveButton("立即更新") { _, _ ->
+                openUpdateUrl()
+            }
+            .setNegativeButton("稍后提醒", null)
+            .show()
+    }
+
+    private fun openUpdateUrl() {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_RELEASES_URL))
+        startActivity(intent)
     }
 }
