@@ -7,8 +7,8 @@ import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
-import android.widget.LinearLayout.LayoutParams as LP
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.Switch
@@ -35,9 +35,9 @@ class RulesActivity : AppCompatActivity() {
         userPreferences = UserPreferences(this)
 
         val scrollView = ScrollView(this).apply {
-            layoutParams = ScrollView.LayoutParams(
-                ScrollView.LayoutParams.MATCH_PARENT,
-                ScrollView.LayoutParams.MATCH_PARENT
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
             )
         }
 
