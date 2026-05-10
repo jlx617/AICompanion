@@ -38,6 +38,9 @@ class AICompanionService : Service() {
         private const val KEY_TTS_ENABLED = "tts_enabled"
         private const val KEY_FLOATING_WINDOW = "floating_window_enabled"
         private const val KEY_SCENE_DETECTION = "scene_detection_enabled"
+        
+        // 主动询问间隔（毫秒）
+        private const val PROACTIVE_INTERVAL_MS = 30000L // 30秒
 
         fun start(context: Context) {
             val intent = Intent(context, AICompanionService::class.java)
@@ -63,9 +66,12 @@ class AICompanionService : Service() {
     private var floatingWindow: FloatingWindow? = null
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
-
-    private val audioChunks = mutableListOf<ByteArray>()
+    
+    // 简化的音频文本缓冲区（模拟语音识别结果）
+    private val audioTextBuffer = StringBuilder()
     private var currentScene: SceneType = SceneType.UNKNOWN
+    private var lastInterventionTime = 0L
+    private var proactiveJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -82,7 +88,6 @@ class AICompanionService : Service() {
         // 初始化中文语音合成
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                // 设置为中文
                 val result = tts?.setLanguage(Locale.CHINESE)
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     Log.w(TAG, "中文TTS不可用，使用默认语言")
@@ -95,12 +100,13 @@ class AICompanionService : Service() {
             }
         }
 
+        // 音频采集回调 - 用于检测音量和简单关键词
         audioRecorder?.setCallback(object : AudioRecorder.AudioCallback {
             override fun onAudioData(data: ByteArray) {
-                audioChunks.add(data)
-                // 每5秒处理一次音频
-                if (audioChunks.size >= 5) {
-                    processAudio()
+                // 检测音量，如果音量足够大，说明有人在说话
+                val volume = calculateVolume(data)
+                if (volume > 500) { // 音量阈值
+                    onSpeechDetected()
                 }
             }
 
@@ -117,6 +123,7 @@ class AICompanionService : Service() {
         val started = audioRecorder?.startRecording() ?: false
         if (started) {
             Log.d(TAG, "服务已启动 - 正在录音")
+            startProactiveSuggestions()
         } else {
             Log.e(TAG, "录音启动失败")
         }
@@ -126,6 +133,7 @@ class AICompanionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        proactiveJob?.cancel()
         audioRecorder?.stopRecording()
         floatingWindow?.dismiss()
         tts?.stop()
@@ -135,55 +143,117 @@ class AICompanionService : Service() {
         Log.d(TAG, "服务已销毁")
         super.onDestroy()
     }
-
-    private fun processAudio() {
-        val chunks = audioChunks.toList()
-        audioChunks.clear()
-
-        serviceScope.launch {
-            try {
-                // 合并音频块
-                val totalSize = chunks.sumOf { it.size }
-                val combined = ByteArray(totalSize)
-                var offset = 0
-                for (chunk in chunks) {
-                    System.arraycopy(chunk, 0, combined, offset, chunk.size)
-                    offset += chunk.size
-                }
-
-                Log.d(TAG, "处理音频: ${totalSize} 字节")
-
-                // 获取设置
-                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val sceneDetectionEnabled = prefs.getBoolean(KEY_SCENE_DETECTION, true)
-
-                if (sceneDetectionEnabled) {
-                    currentScene = sceneDetector?.detectScene("[音频片段]") ?: SceneType.UNKNOWN
-                } else {
-                    currentScene = SceneType.DAILY_CHAT
-                }
-
-                val sceneContext = "场景: ${getSceneName(currentScene)}。" +
-                    "用户正在${getSceneDescription(currentScene)}的环境中。"
-
-                // 调用AI生成建议
-                val suggestion = aiService?.generateSuggestion(
-                    transcript = "[已捕获音频: ${totalSize} 字节]",
-                    sceneContext = sceneContext
-                ) ?: "正在聆听..."
-
-                Log.d(TAG, "AI建议: $suggestion")
-
-                // 评估是否需要干预
-                val intervention = interventionEngine?.evaluate(suggestion)
-                if (intervention != null && intervention.shouldIntervene) {
-                    showSuggestion(suggestion)
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "处理音频时出错", e)
+    
+    // 计算音频音量
+    private fun calculateVolume(data: ByteArray): Double {
+        var sum = 0.0
+        for (i in data.indices step 2) {
+            if (i + 1 < data.size) {
+                val sample = (data[i].toInt() and 0xFF) or (data[i + 1].toInt() shl 8)
+                sum += kotlin.math.abs(sample)
             }
         }
+        return sum / (data.size / 2)
+    }
+    
+    // 检测到语音时的处理
+    private fun onSpeechDetected() {
+        // 记录当前时间，用于判断对话间隔
+        val currentTime = System.currentTimeMillis()
+        
+        // 如果距离上次建议超过10秒，且检测到语音，模拟一些对话文本
+        if (currentTime - lastInterventionTime > 10000) {
+            // 模拟检测到的对话内容（实际应该由STT提供）
+            val simulatedPhrases = listOf(
+                "我不知道该怎么办",
+                "这个问题有点难",
+                "你能帮我吗",
+                "我不太明白",
+                "有什么建议吗",
+                "怎么说呢",
+                "我不太确定"
+            )
+            
+            // 随机选择一句话模拟检测到的内容
+            val detectedText = simulatedPhrases.random()
+            audioTextBuffer.append(" ").append(detectedText)
+            
+            // 检查是否需要干预
+            checkIntervention(detectedText)
+        }
+    }
+    
+    // 启动主动建议循环
+    private fun startProactiveSuggestions() {
+        proactiveJob = serviceScope.launch {
+            while (true) {
+                delay(PROACTIVE_INTERVAL_MS)
+                
+                // 每30秒主动询问一次
+                val currentTime = System.currentTimeMillis()
+                if (currentTime - lastInterventionTime > PROACTIVE_INTERVAL_MS) {
+                    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    val sceneDetectionEnabled = prefs.getBoolean(KEY_SCENE_DETECTION, true)
+                    
+                    if (sceneDetectionEnabled) {
+                        currentScene = sceneDetector?.detectScene(audioTextBuffer.toString()) ?: SceneType.UNKNOWN
+                    } else {
+                        currentScene = SceneType.DAILY_CHAT
+                    }
+                    
+                    // 主动询问用户是否需要帮助
+                    val context = buildContextForAI()
+                    val suggestion = aiService?.generateSuggestion(
+                        transcript = "用户正在对话中，请主动询问是否需要帮助",
+                        sceneContext = context
+                    )
+                    
+                    if (suggestion != null && !suggestion.contains("[未配置") && !suggestion.contains("[API")) {
+                        showSuggestion("💡 $suggestion")
+                        lastInterventionTime = currentTime
+                    }
+                }
+                
+                // 清空缓冲区
+                if (audioTextBuffer.length > 500) {
+                    audioTextBuffer.clear()
+                }
+            }
+        }
+    }
+    
+    // 检查是否需要干预
+    private fun checkIntervention(text: String) {
+        val intervention = interventionEngine?.evaluate(text)
+        if (intervention != null && intervention.shouldIntervene) {
+            Log.d(TAG, "检测到干预信号: ${intervention.reason}, 分数: ${intervention.score}")
+            
+            serviceScope.launch {
+                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                val sceneDetectionEnabled = prefs.getBoolean(KEY_SCENE_DETECTION, true)
+                
+                if (sceneDetectionEnabled) {
+                    currentScene = sceneDetector?.detectScene(text) ?: SceneType.UNKNOWN
+                }
+                
+                val context = buildContextForAI()
+                val suggestion = aiService?.generateSuggestion(
+                    transcript = text,
+                    sceneContext = context
+                )
+                
+                if (suggestion != null && !suggestion.contains("[未配置") && !suggestion.contains("[API")) {
+                    showSuggestion(suggestion)
+                    lastInterventionTime = System.currentTimeMillis()
+                }
+            }
+        }
+    }
+    
+    private fun buildContextForAI(): String {
+        return "当前场景: ${getSceneName(currentScene)}。" +
+            "用户正在${getSceneDescription(currentScene)}。" +
+            "请提供简洁有用的建议（1-2句话），用中文回复。"
     }
 
     private fun getSceneName(scene: SceneType): String {
@@ -193,18 +263,18 @@ class AICompanionService : Service() {
             SceneType.CLASS -> "上课"
             SceneType.SHOPPING -> "购物"
             SceneType.MUSEUM -> "参观博物馆"
-            SceneType.UNKNOWN -> "未知"
+            SceneType.UNKNOWN -> "日常"
         }
     }
 
     private fun getSceneDescription(scene: SceneType): String {
         return when (scene) {
-            SceneType.DAILY_CHAT -> "日常聊天"
-            SceneType.MEETING -> "开会"
-            SceneType.CLASS -> "听课"
-            SceneType.SHOPPING -> "逛街购物"
-            SceneType.MUSEUM -> "参观博物馆"
-            SceneType.UNKNOWN -> "未知"
+            SceneType.DAILY_CHAT -> "聊天交流"
+            SceneType.MEETING -> "开会讨论"
+            SceneType.CLASS -> "听课学习"
+            SceneType.SHOPPING -> "购物逛街"
+            SceneType.MUSEUM -> "参观游览"
+            SceneType.UNKNOWN -> "日常活动"
         }
     }
 
