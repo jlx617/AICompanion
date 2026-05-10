@@ -19,6 +19,7 @@ import com.ai.companion.ai.UserPreferences
 import com.ai.companion.audio.AudioRecorder
 import com.ai.companion.audio.AudioRouter
 import com.ai.companion.audio.SpeechToTextService
+import com.ai.companion.audio.SpeechSegmentListener
 import com.ai.companion.audio.VoiceActivityDetector
 import com.ai.companion.scene.SceneType
 import com.ai.companion.ui.FloatingWindow
@@ -40,7 +41,7 @@ import java.util.Locale
  * - 智能过滤，仅对重要内容（问题、事实、情感内容）做出响应
  * - 用户点击浮动窗口可获取深度分析
  */
-class AICompanionService : Service(), VoiceActivityDetector.SpeechSegmentListener {
+class AICompanionService : Service(), SpeechSegmentListener {
 
     companion object {
         private const val TAG = "AICompanionService"
@@ -48,6 +49,7 @@ class AICompanionService : Service(), VoiceActivityDetector.SpeechSegmentListene
         private const val CHANNEL_ID = "ai_companion_channel"
         private const val PREFS_NAME = "ai_companion_prefs"
         private const val KEY_TTS_ENABLED = "tts_enabled"
+        private const val SAMPLE_RATE = 16000
 
         fun start(context: Context) {
             val intent = Intent(context, AICompanionService::class.java)

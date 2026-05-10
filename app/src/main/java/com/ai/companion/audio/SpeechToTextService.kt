@@ -35,6 +35,10 @@ class SpeechToTextService(context: Context) {
 
         private const val CONNECT_TIMEOUT = 30L
         private const val READ_TIMEOUT = 60L
+
+        private const val SAMPLE_RATE = 16000
+        private const val CHANNELS = 1
+        private const val BITS_PER_SAMPLE = 16
     }
 
     private val prefs: SharedPreferences =
