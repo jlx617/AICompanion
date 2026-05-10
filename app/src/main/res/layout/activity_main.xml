@@ -44,6 +44,15 @@
         style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
 
     <Button
+        android:id="@+id/btnRules"
+        android:layout_width="200dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="智能规则"
+        android:textSize="14sp"
+        style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
+
+    <Button
         android:id="@+id/btnSettings"
         android:layout_width="200dp"
         android:layout_height="wrap_content"

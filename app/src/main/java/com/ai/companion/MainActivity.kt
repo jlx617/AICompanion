@@ -60,6 +60,10 @@ class MainActivity : AppCompatActivity() {
             openSettings()
         }
 
+        binding.btnRules.setOnClickListener {
+            startActivity(Intent(this, RulesActivity::class.java))
+        }
+
         binding.btnSettings.setOnClickListener {
             openSettings()
         }

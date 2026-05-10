@@ -14,21 +14,33 @@ import android.util.Log
 import com.ai.companion.MainActivity
 import com.ai.companion.R
 import com.ai.companion.ai.AIService
-import com.ai.companion.ai.InterventionEngine
-import com.ai.companion.ai.SceneDetector
+import com.ai.companion.ai.ContentAnalyzer
+import com.ai.companion.ai.UserPreferences
 import com.ai.companion.audio.AudioRecorder
 import com.ai.companion.audio.AudioRouter
+import com.ai.companion.audio.SpeechToTextService
+import com.ai.companion.audio.VoiceActivityDetector
 import com.ai.companion.scene.SceneType
 import com.ai.companion.ui.FloatingWindow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
-class AICompanionService : Service() {
+/**
+ * AI陪伴助手 - 核心前台服务 (v2.0)
+ *
+ * 架构: AudioRecorder -> VoiceActivityDetector -> SpeechToTextService -> ContentAnalyzer -> AIService -> FloatingWindow
+ *
+ * 核心行为:
+ * - AI默认静默，不主动说话，仅在浮动窗口中显示文字
+ * - 使用SiliconFlow SenseVoice API进行真实语音识别
+ * - 智能过滤，仅对重要内容（问题、事实、情感内容）做出响应
+ * - 用户点击浮动窗口可获取深度分析
+ */
+class AICompanionService : Service(), VoiceActivityDetector.SpeechSegmentListener {
 
     companion object {
         private const val TAG = "AICompanionService"
@@ -36,11 +48,6 @@ class AICompanionService : Service() {
         private const val CHANNEL_ID = "ai_companion_channel"
         private const val PREFS_NAME = "ai_companion_prefs"
         private const val KEY_TTS_ENABLED = "tts_enabled"
-        private const val KEY_FLOATING_WINDOW = "floating_window_enabled"
-        private const val KEY_SCENE_DETECTION = "scene_detection_enabled"
-        
-        // 主动询问间隔（毫秒）
-        private const val PROACTIVE_INTERVAL_MS = 30000L // 30秒
 
         fun start(context: Context) {
             val intent = Intent(context, AICompanionService::class.java)
@@ -58,34 +65,41 @@ class AICompanionService : Service() {
     }
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + Job())
-    private var audioRecorder: AudioRecorder? = null
-    private var audioRouter: AudioRouter? = null
-    private var aiService: AIService? = null
-    private var sceneDetector: SceneDetector? = null
-    private var interventionEngine: InterventionEngine? = null
-    private var floatingWindow: FloatingWindow? = null
+
+    private lateinit var audioRecorder: AudioRecorder
+    private lateinit var audioRouter: AudioRouter
+    private lateinit var speechToTextService: SpeechToTextService
+    private lateinit var contentAnalyzer: ContentAnalyzer
+    private lateinit var aiService: AIService
+    private lateinit var floatingWindow: FloatingWindow
+    private lateinit var userPreferences: UserPreferences
+    private lateinit var voiceActivityDetector: VoiceActivityDetector
+
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
-    
-    // 简化的音频文本缓冲区（模拟语音识别结果）
-    private val audioTextBuffer = StringBuilder()
-    private var currentScene: SceneType = SceneType.UNKNOWN
-    private var lastInterventionTime = 0L
-    private var proactiveJob: Job? = null
+
+    private val notificationManager: NotificationManager by lazy {
+        getSystemService(NotificationManager::class.java)
+    }
+
+    // ==================== Service 生命周期 ====================
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification())
+        startForeground(NOTIFICATION_ID, buildNotification("AI陪伴助手聆听中..."))
 
+        // 初始化各组件
         audioRecorder = AudioRecorder()
         audioRouter = AudioRouter(this)
+        speechToTextService = SpeechToTextService(this)
+        contentAnalyzer = ContentAnalyzer(this)
         aiService = AIService(this)
-        sceneDetector = SceneDetector()
-        interventionEngine = InterventionEngine()
         floatingWindow = FloatingWindow(this)
+        userPreferences = UserPreferences(this)
+        voiceActivityDetector = VoiceActivityDetector(this)
 
-        // 初始化中文语音合成
+        // 初始化中文TTS（仅在用户主动请求深度分析时使用，不自动播放）
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 val result = tts?.setLanguage(Locale.CHINESE)
@@ -94,20 +108,16 @@ class AICompanionService : Service() {
                     tts?.setLanguage(Locale.getDefault())
                 }
                 isTtsReady = true
-                Log.d(TAG, "TTS初始化成功")
+                Log.d(TAG, "TTS初始化成功（仅在用户主动请求时使用）")
             } else {
                 Log.e(TAG, "TTS初始化失败")
             }
         }
 
-        // 音频采集回调 - 用于检测音量和简单关键词
-        audioRecorder?.setCallback(object : AudioRecorder.AudioCallback {
+        // 设置音频采集回调，将音频数据送入VAD进行语音活动检测
+        audioRecorder.setCallback(object : AudioRecorder.AudioCallback {
             override fun onAudioData(data: ByteArray) {
-                // 检测音量，如果音量足够大，说明有人在说话
-                val volume = calculateVolume(data)
-                if (volume > 500) { // 音量阈值
-                    onSpeechDetected()
-                }
+                voiceActivityDetector.processAudioData(data, SAMPLE_RATE)
             }
 
             override fun onError(error: String) {
@@ -115,15 +125,14 @@ class AICompanionService : Service() {
             }
         })
 
-        Log.d(TAG, "服务已创建")
+        Log.d(TAG, "服务已创建 (v2.0)")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        audioRouter?.routeToHeadset()
-        val started = audioRecorder?.startRecording() ?: false
+        audioRouter.routeToHeadset()
+        val started = audioRecorder.startRecording()
         if (started) {
-            Log.d(TAG, "服务已启动 - 正在录音")
-            startProactiveSuggestions()
+            Log.d(TAG, "服务已启动 - 正在录音并监听语音")
         } else {
             Log.e(TAG, "录音启动失败")
         }
@@ -133,165 +142,173 @@ class AICompanionService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        proactiveJob?.cancel()
-        audioRecorder?.stopRecording()
-        floatingWindow?.dismiss()
+        audioRecorder.stopRecording()
+        voiceActivityDetector.reset()
+        floatingWindow.dismiss()
         tts?.stop()
         tts?.shutdown()
-        sceneDetector?.reset()
         serviceScope.cancel()
         Log.d(TAG, "服务已销毁")
         super.onDestroy()
     }
-    
-    // 计算音频音量
-    private fun calculateVolume(data: ByteArray): Double {
-        var sum = 0.0
-        for (i in data.indices step 2) {
-            if (i + 1 < data.size) {
-                val sample = (data[i].toInt() and 0xFF) or (data[i + 1].toInt() shl 8)
-                sum += kotlin.math.abs(sample)
-            }
-        }
-        return sum / (data.size / 2)
-    }
-    
-    // 检测到语音时的处理
-    private fun onSpeechDetected() {
-        // 记录当前时间，用于判断对话间隔
-        val currentTime = System.currentTimeMillis()
-        
-        // 如果距离上次建议超过10秒，且检测到语音，模拟一些对话文本
-        if (currentTime - lastInterventionTime > 10000) {
-            // 模拟检测到的对话内容（实际应该由STT提供）
-            val simulatedPhrases = listOf(
-                "我不知道该怎么办",
-                "这个问题有点难",
-                "你能帮我吗",
-                "我不太明白",
-                "有什么建议吗",
-                "怎么说呢",
-                "我不太确定"
-            )
-            
-            // 随机选择一句话模拟检测到的内容
-            val detectedText = simulatedPhrases.random()
-            audioTextBuffer.append(" ").append(detectedText)
-            
-            // 检查是否需要干预
-            checkIntervention(detectedText)
-        }
-    }
-    
-    // 启动主动建议循环
-    private fun startProactiveSuggestions() {
-        proactiveJob = serviceScope.launch {
-            while (true) {
-                delay(PROACTIVE_INTERVAL_MS)
-                
-                // 每30秒主动询问一次
-                val currentTime = System.currentTimeMillis()
-                if (currentTime - lastInterventionTime > PROACTIVE_INTERVAL_MS) {
-                    val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                    val sceneDetectionEnabled = prefs.getBoolean(KEY_SCENE_DETECTION, true)
-                    
-                    if (sceneDetectionEnabled) {
-                        currentScene = sceneDetector?.detectScene(audioTextBuffer.toString()) ?: SceneType.UNKNOWN
-                    } else {
-                        currentScene = SceneType.DAILY_CHAT
-                    }
-                    
-                    // 主动询问用户是否需要帮助
-                    val context = buildContextForAI()
-                    val suggestion = aiService?.generateSuggestion(
-                        transcript = "用户正在对话中，请主动询问是否需要帮助",
-                        sceneContext = context
+
+    // ==================== VoiceActivityDetector.SpeechSegmentListener ====================
+
+    /**
+     * 当VAD检测到一段完整语音片段时回调
+     * 处理流程: STT转录 -> 内容分析 -> AI建议 -> 显示
+     */
+    override fun onSpeechSegment(audioData: ByteArray) {
+        Log.d(TAG, "收到语音片段: ${audioData.size} 字节")
+        updateNotification("正在分析...")
+
+        serviceScope.launch {
+            try {
+                // 1. 语音转文字
+                val result = speechToTextService.transcribe(audioData)
+                if (!result.success || result.text.isBlank()) {
+                    Log.d(TAG, "转录失败或结果为空: ${result.error}")
+                    updateNotification("AI陪伴助手聆听中...")
+                    return@launch
+                }
+
+                val transcribedText = result.text.trim()
+                Log.d(TAG, "转录结果: $transcribedText")
+
+                // 2. 分析内容重要性
+                val analysis = contentAnalyzer.analyze(transcribedText)
+                Log.d(TAG, "内容分析: score=${analysis.score}, important=${analysis.isImportant}, reason=${analysis.reason}")
+
+                if (analysis.isImportant) {
+                    // 3. 构建上下文并请求AI建议
+                    val sceneContext = buildContextForAI()
+                    val suggestion = aiService.generateSuggestion(
+                        transcript = transcribedText,
+                        sceneContext = sceneContext
                     )
-                    
-                    if (suggestion != null && !suggestion.contains("[未配置") && !suggestion.contains("[API")) {
-                        showSuggestion("💡 $suggestion")
-                        lastInterventionTime = currentTime
+
+                    if (suggestion.isNotEmpty() && !suggestion.startsWith("[")) {
+                        // 仅在浮动窗口中显示文字，不使用TTS
+                        showSuggestion(suggestion, isDeepExplanation = false)
+                        Log.d(TAG, "AI建议: $suggestion")
                     }
+                } else {
+                    Log.d(TAG, "内容不重要，跳过")
                 }
-                
-                // 清空缓冲区
-                if (audioTextBuffer.length > 500) {
-                    audioTextBuffer.clear()
-                }
+
+                updateNotification("AI陪伴助手聆听中...")
+            } catch (e: Exception) {
+                Log.e(TAG, "处理语音片段时发生异常", e)
+                updateNotification("AI陪伴助手聆听中...")
             }
         }
     }
-    
-    // 检查是否需要干预
-    private fun checkIntervention(text: String) {
-        val intervention = interventionEngine?.evaluate(text)
-        if (intervention != null && intervention.shouldIntervene) {
-            Log.d(TAG, "检测到干预信号: ${intervention.reason}, 分数: ${intervention.score}")
-            
-            serviceScope.launch {
-                val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                val sceneDetectionEnabled = prefs.getBoolean(KEY_SCENE_DETECTION, true)
-                
-                if (sceneDetectionEnabled) {
-                    currentScene = sceneDetector?.detectScene(text) ?: SceneType.UNKNOWN
-                }
-                
-                val context = buildContextForAI()
-                val suggestion = aiService?.generateSuggestion(
-                    transcript = text,
-                    sceneContext = context
+
+    /**
+     * 当VAD检测到语音开始时回调
+     */
+    override fun onSpeechStarted() {
+        Log.d(TAG, "检测到语音开始")
+        updateNotification("正在聆听...")
+    }
+
+    /**
+     * 当VAD检测到语音结束时回调
+     */
+    override fun onSpeechEnded() {
+        Log.d(TAG, "检测到语音结束")
+        updateNotification("AI陪伴助手聆听中...")
+    }
+
+    // ==================== 公开方法 ====================
+
+    /**
+     * 生成深度解释 - 供FloatingWindow点击时调用
+     *
+     * 当用户点击浮动窗口时，表示他们想要更详细的信息：
+     * 1. 调用AIService获取详细解释
+     * 2. 在浮动窗口中显示结果
+     * 3. 如果用户开启了TTS，则朗读结果
+     * 4. 记录用户交互以学习偏好
+     *
+     * @param text 原始转录文本或需要深入解释的内容
+     */
+    fun generateDeepExplanation(text: String) {
+        Log.d(TAG, "用户请求深度解释: $text")
+        updateNotification("正在深度分析...")
+
+        serviceScope.launch {
+            try {
+                val sceneContext = buildContextForAI()
+                val detailedPrompt = "用户对以下内容感兴趣，希望获得详细解释。请提供深入、全面的分析。" +
+                    "当前场景: $sceneContext。" +
+                    "原始内容: \"$text\"。" +
+                    "请用中文详细解释，可以包含背景知识、相关概念和实用建议。"
+
+                val explanation = aiService.generateSuggestion(
+                    transcript = detailedPrompt,
+                    sceneContext = sceneContext
                 )
-                
-                if (suggestion != null && !suggestion.contains("[未配置") && !suggestion.contains("[API")) {
-                    showSuggestion(suggestion)
-                    lastInterventionTime = System.currentTimeMillis()
+
+                if (explanation.isNotEmpty() && !explanation.startsWith("[")) {
+                    showSuggestion(explanation, isDeepExplanation = true)
+                    Log.d(TAG, "深度解释: $explanation")
                 }
+
+                // 记录用户交互，学习偏好
+                contentAnalyzer.recordUserInteraction(text)
+
+                updateNotification("AI陪伴助手聆听中...")
+            } catch (e: Exception) {
+                Log.e(TAG, "生成深度解释时发生异常", e)
+                updateNotification("AI陪伴助手聆听中...")
             }
         }
     }
-    
+
+    // ==================== 私有方法 ====================
+
+    /**
+     * 显示建议文本
+     *
+     * @param text 要显示的建议文本
+     * @param isDeepExplanation 是否为深度解释（深度解释时可根据用户设置使用TTS）
+     */
+    private fun showSuggestion(text: String, isDeepExplanation: Boolean) {
+        // 始终在浮动窗口中显示
+        floatingWindow.show(text)
+
+        // 仅在深度解释且用户开启TTS时才使用语音朗读
+        if (isDeepExplanation) {
+            val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val ttsEnabled = prefs.getBoolean(KEY_TTS_ENABLED, false)
+            if (ttsEnabled && isTtsReady) {
+                tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "deep_explanation")
+                Log.d(TAG, "使用TTS朗读深度解释")
+            }
+        }
+    }
+
+    /**
+     * 构建AI请求的场景上下文
+     */
     private fun buildContextForAI(): String {
-        return "当前场景: ${getSceneName(currentScene)}。" +
-            "用户正在${getSceneDescription(currentScene)}。" +
-            "请提供简洁有用的建议（1-2句话），用中文回复。"
+        return "当前场景: 日常陪伴。" +
+            "你通过耳机麦克风聆听周围对话，提供简洁有用的建议。" +
+            "请保持回复简短（1-2句话），用中文回复。"
     }
 
-    private fun getSceneName(scene: SceneType): String {
-        return when (scene) {
-            SceneType.DAILY_CHAT -> "日常对话"
-            SceneType.MEETING -> "会议"
-            SceneType.CLASS -> "上课"
-            SceneType.SHOPPING -> "购物"
-            SceneType.MUSEUM -> "参观博物馆"
-            SceneType.UNKNOWN -> "日常"
-        }
+    /**
+     * 更新前台通知文本
+     */
+    private fun updateNotification(text: String) {
+        val notification = buildNotification(text)
+        notificationManager.notify(NOTIFICATION_ID, notification)
     }
 
-    private fun getSceneDescription(scene: SceneType): String {
-        return when (scene) {
-            SceneType.DAILY_CHAT -> "聊天交流"
-            SceneType.MEETING -> "开会讨论"
-            SceneType.CLASS -> "听课学习"
-            SceneType.SHOPPING -> "购物逛街"
-            SceneType.MUSEUM -> "参观游览"
-            SceneType.UNKNOWN -> "日常活动"
-        }
-    }
-
-    private fun showSuggestion(text: String) {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val floatingWindowEnabled = prefs.getBoolean(KEY_FLOATING_WINDOW, true)
-        val ttsEnabled = prefs.getBoolean(KEY_TTS_ENABLED, false)
-
-        if (floatingWindowEnabled) {
-            floatingWindow?.show(text)
-        }
-
-        if (ttsEnabled && isTtsReady) {
-            tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "suggestion")
-        }
-    }
-
+    /**
+     * 创建通知渠道 (Android O+)
+     */
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -301,13 +318,14 @@ class AICompanionService : Service() {
             ).apply {
                 description = getString(R.string.notification_channel_description)
             }
-
-            val manager = getSystemService(NotificationManager::class.java)
-            manager.createNotificationChannel(channel)
+            notificationManager.createNotificationChannel(channel)
         }
     }
 
-    private fun buildNotification(): Notification {
+    /**
+     * 构建前台通知
+     */
+    private fun buildNotification(text: String): Notification {
         val intent = Intent(this, MainActivity::class.java)
         val pendingIntent = PendingIntent.getActivity(
             this,
@@ -319,7 +337,7 @@ class AICompanionService : Service() {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
                 .setContentTitle(getString(R.string.app_name))
-                .setContentText(getString(R.string.service_running))
+                .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                 .setContentIntent(pendingIntent)
                 .build()
@@ -327,7 +345,7 @@ class AICompanionService : Service() {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
                 .setContentTitle(getString(R.string.app_name))
-                .setContentText(getString(R.string.service_running))
+                .setContentText(text)
                 .setSmallIcon(android.R.drawable.ic_btn_speak_now)
                 .setContentIntent(pendingIntent)
                 .build()

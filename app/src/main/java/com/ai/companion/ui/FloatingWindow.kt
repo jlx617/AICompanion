@@ -18,6 +18,9 @@ class FloatingWindow(private val context: Context) {
     private var floatingView: View? = null
     private var textView: TextView? = null
     private var isShowing = false
+    private var onTapCallback: (() -> Unit)? = null
+    private var longPressHandler: android.os.Handler? = null
+    private var longPressRunnable: Runnable? = null
 
     private val layoutParams: WindowManager.LayoutParams
         get() {
@@ -70,6 +73,9 @@ class FloatingWindow(private val context: Context) {
         var initialTouchY = 0f
         val params = layoutParams
 
+        longPressHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        longPressRunnable = Runnable { dismiss() }
+
         container.setOnTouchListener { view, event ->
             when (event.action) {
                 MotionEvent.ACTION_DOWN -> {
@@ -77,19 +83,27 @@ class FloatingWindow(private val context: Context) {
                     initialY = params.y
                     initialTouchX = event.rawX
                     initialTouchY = event.rawY
+                    longPressHandler?.postDelayed(longPressRunnable!!, 500)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    val diffX = Math.abs(event.rawX - initialTouchX)
+                    val diffY = Math.abs(event.rawY - initialTouchY)
+                    if (diffX > 10 || diffY > 10) {
+                        longPressHandler?.removeCallbacks(longPressRunnable!!)
+                    }
                     params.x = initialX + (event.rawX - initialTouchX).toInt()
                     params.y = initialY + (event.rawY - initialTouchY).toInt()
                     windowManager.updateViewLayout(container, params)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    longPressHandler?.removeCallbacks(longPressRunnable!!)
                     val diffX = Math.abs(event.rawX - initialTouchX)
                     val diffY = Math.abs(event.rawY - initialTouchY)
                     if (diffX < 10 && diffY < 10) {
-                        dismiss()
+                        // It's a tap, not a drag - invoke the tap callback
+                        onTapCallback?.invoke()
                     }
                     true
                 }
@@ -110,8 +124,13 @@ class FloatingWindow(private val context: Context) {
         textView?.text = suggestion
     }
 
+    fun setOnTapCallback(callback: () -> Unit) {
+        onTapCallback = callback
+    }
+
     fun dismiss() {
         if (!isShowing) return
+        longPressHandler?.removeCallbacks(longPressRunnable!!)
         try {
             floatingView?.let {
                 windowManager.removeView(it)

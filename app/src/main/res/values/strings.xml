@@ -12,7 +12,7 @@
     <string name="tts_enabled">开启语音播报</string>
     <string name="floating_window_enabled">开启悬浮窗</string>
     <string name="scene_detection_enabled">开启场景识别</string>
-    <string name="usage_instructions">请先在设置中配置API密钥，然后插上耳机，点击"开始聆听"按钮即可开始对话监测。AI建议将以悬浮窗形式显示。</string>
+    <string name="usage_instructions">请先在设置中配置API密钥，然后插上耳机，点击"开始聆听"按钮即可开始对话监测。AI建议将以悬浮窗形式显示。你可以通过"智能规则"设置关注领域和忽略内容。</string>
     <string name="permission_required">需要麦克风、悬浮窗等权限才能正常运行，请授予权限。</string>
     <string name="notification_channel_name">AI陪伴助手服务</string>
     <string name="notification_channel_description">AI陪伴助手前台服务通知</string>
@@ -27,4 +27,13 @@
     <string name="permissions_required">需要相关权限才能运行</string>
     <string name="please_grant_overlay_permission">请授予悬浮窗权限</string>
     <string name="api_key_not_configured">请先在设置中配置API密钥</string>
+    <string name="rules_settings">智能规则</string>
+    <string name="rules_saved">规则已保存</string>
+    <string name="focus_areas">关注领域</string>
+    <string name="focus_areas_hint">设置你感兴趣的关键词，AI会优先关注包含这些词的对话</string>
+    <string name="ignore_content">忽略内容</string>
+    <string name="ignore_content_hint">设置要忽略的关键词，包含这些词的对话不会被分析</string>
+    <string name="listening_status">AI陪伴助手聆听中...</string>
+    <string name="analyzing_status">正在分析...</string>
+    <string name="tap_for_more">点击查看详细解说</string>
 </resources>
