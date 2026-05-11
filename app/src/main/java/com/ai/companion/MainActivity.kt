@@ -13,6 +13,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.ai.companion.databinding.ActivityMainBinding
 import com.ai.companion.service.AICompanionService
+import com.ai.companion.update.AutoUpdateManager
 
 class MainActivity : AppCompatActivity() {
 
@@ -24,6 +25,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var isServiceRunning = false
+    private lateinit var autoUpdateManager: AutoUpdateManager
 
     private val requiredPermissions = arrayOf(
         Manifest.permission.RECORD_AUDIO
@@ -33,6 +35,8 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        autoUpdateManager = AutoUpdateManager(this)
 
         setupButtons()
         updateUI()
@@ -66,6 +70,10 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnSettings.setOnClickListener {
             openSettings()
+        }
+
+        binding.btnCheckUpdate.setOnClickListener {
+            autoUpdateManager.checkForUpdate(showNoUpdateDialog = true)
         }
     }
 

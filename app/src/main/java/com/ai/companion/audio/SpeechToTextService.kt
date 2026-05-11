@@ -30,7 +30,7 @@ class SpeechToTextService(context: Context) {
         private const val PREFS_NAME = "ai_companion_prefs"
         private const val KEY_API_KEY = "api_key"
 
-        private const val API_URL = "https://api.siliconflow.cn/v1/audio/transcriptions"
+        private const val API_URL = "https://api.siliconflow.com/v1/audio/transcriptions"
         private const val MODEL = "FunAudioLLM/SenseVoiceSmall"
 
         private const val CONNECT_TIMEOUT = 30L
@@ -121,13 +121,19 @@ class SpeechToTextService(context: Context) {
                         .post(multipartBody)
                         .build()
 
-                    Log.d(TAG, "开始发送音频到 SiliconFlow STT API，音频大小: ${wavData.size} 字节")
+                    Log.d(TAG, "开始发送音频到 SiliconFlow STT API")
+                    Log.d(TAG, "API URL: $API_URL")
+                    Log.d(TAG, "WAV 文件大小: ${wavData.size} 字节 (${wavData.size / 1024} KB)")
+                    Log.d(TAG, "临时文件路径: ${tempFile.absolutePath}")
 
                     val response = httpClient.newCall(request).execute()
                     val responseBody = response.body?.string()
 
+                    Log.d(TAG, "API 响应状态码: ${response.code}")
+
                     if (!response.isSuccessful) {
-                        Log.e(TAG, "API 请求失败，HTTP ${response.code}: $responseBody")
+                        Log.e(TAG, "API 请求失败，HTTP ${response.code}")
+                        Log.e(TAG, "错误响应体: $responseBody")
                         return@withContext TranscriptionResult(
                             success = false,
                             text = "",
@@ -157,7 +163,8 @@ class SpeechToTextService(context: Context) {
                         )
                     }
 
-                    Log.d(TAG, "转录成功: $transcribedText")
+                    Log.d(TAG, "转录成功，文本长度: ${transcribedText.length} 字符")
+                    Log.d(TAG, "转录结果: $transcribedText")
                     TranscriptionResult(
                         success = true,
                         text = transcribedText,
@@ -168,11 +175,11 @@ class SpeechToTextService(context: Context) {
                     tempFile.delete()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "转录过程发生异常", e)
+                Log.e(TAG, "转录过程发生异常: ${e.javaClass.simpleName}: ${e.message}", e)
                 TranscriptionResult(
                     success = false,
                     text = "",
-                    error = "转录失败: ${e.message}"
+                    error = "转录失败: ${e.javaClass.simpleName}: ${e.message}"
                 )
             }
         }

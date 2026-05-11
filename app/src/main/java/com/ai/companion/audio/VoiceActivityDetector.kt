@@ -15,16 +15,16 @@ class VoiceActivityDetector(private val listener: SpeechSegmentListener) {
         private const val TAG = "VAD"
 
         /** RMS 音量低于此值视为静音 */
-        private const val SILENCE_THRESHOLD = 200
+        private const val SILENCE_THRESHOLD = 100
 
         /** 持续静音超过此时长（毫秒），判定为一段语音结束 */
-        private const val SUSTAINED_SILENCE_MS = 1500L
+        private const val SUSTAINED_SILENCE_MS = 800L
 
         /** 最短语音片段时长（毫秒），低于此值的片段视为噪声被丢弃 */
-        private const val MIN_SEGMENT_MS = 500L
+        private const val MIN_SEGMENT_MS = 300L
 
         /** 防抖时长（毫秒），触发一段语音结束后等待此时间再开始新片段 */
-        private const val DEBOUNCE_MS = 2000L
+        private const val DEBOUNCE_MS = 1000L
     }
 
     /** 当前是否处于语音活动状态 */
@@ -65,6 +65,8 @@ class VoiceActivityDetector(private val listener: SpeechSegmentListener) {
         }
 
         val rms = calculateRms(data)
+
+        Log.d(TAG, "processAudioData: RMS=$rms, threshold=$SILENCE_THRESHOLD, isSpeaking=$isSpeaking")
 
         if (rms > SILENCE_THRESHOLD) {
             // 检测到语音

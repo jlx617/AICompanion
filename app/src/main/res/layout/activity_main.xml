@@ -61,6 +61,15 @@
         android:textSize="14sp"
         style="@style/Widget.MaterialComponents.Button.TextButton" />
 
+    <Button
+        android:id="@+id/btnCheckUpdate"
+        android:layout_width="200dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="检查更新"
+        android:textSize="14sp"
+        style="@style/Widget.MaterialComponents.Button.TextButton" />
+
     <TextView
         android:id="@+id/tvInstructions"
         android:layout_width="match_parent"
