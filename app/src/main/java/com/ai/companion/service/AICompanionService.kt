@@ -156,6 +156,7 @@ class AICompanionService : Service() {
                     if (audioBuffer.isEmpty()) {
                         Log.d(TAG, "第${captureCount}次采集: 无音频数据")
                         shouldSkip = true
+                        audioData = ByteArray(0)
                     } else {
                         val totalSize = audioBuffer.sumOf { it.size }
                         audioData = ByteArray(totalSize)
