@@ -3,63 +3,47 @@ package com.ai.companion.audio
 import android.util.Log
 import java.io.ByteArrayOutputStream
 
-/**
- * 语音活动检测器 (Voice Activity Detector)
- *
- * 分析音频块以检测何时有人在说话，并将音频分割为语音片段用于转录。
- */
 class VoiceActivityDetector(private val listener: SpeechSegmentListener) {
 
     companion object {
         private const val TAG = "VAD"
 
-        /** RMS 音量低于此值视为静音 - 设置较低以确保灵敏度 */
-        private const val SILENCE_THRESHOLD = 50
+        /** RMS 阈值 - 设为极低值确保能检测到任何语音 */
+        private const val SILENCE_THRESHOLD = 10
 
         /** 持续静音超过此时长（毫秒），判定为一段语音结束 */
-        private const val SUSTAINED_SILENCE_MS = 700L
+        private const val SUSTAINED_SILENCE_MS = 600L
 
-        /** 最短语音片段时长（毫秒），低于此值的片段视为噪声被丢弃 */
+        /** 最短语音片段时长（毫秒） */
         private const val MIN_SEGMENT_MS = 200L
 
-        /** 防抖时长（毫秒），触发一段语音结束后等待此时间再开始新片段 */
-        private const val DEBOUNCE_MS = 500L
+        /** 防抖时长（毫秒） */
+        private const val DEBOUNCE_MS = 300L
     }
 
-    /** 当前是否处于语音活动状态 */
     private var isSpeaking = false
-
-    /** 语音开始时间戳 */
     private var speechStartTime = 0L
-
-    /** 最后一次检测到语音（非静音）的时间戳 */
     private var lastSpeechTime = 0L
-
-    /** 上一次语音片段结束时间戳，用于防抖 */
     private var lastSegmentEndTime = 0L
-
-    /** 当前采样率，由 processAudioData 传入 */
-    private var currentSampleRate = 0
-
-    /** 用于累积当前语音片段的音频字节 */
     private var audioBuffer = ByteArrayOutputStream()
 
-    /** 用于调试：记录最近一次RMS值 */
+    /** 最近一次 RMS 值 - 供外部读取显示 */
     @Volatile
     var lastRms: Double = 0.0
         private set
 
-    /** 用于调试：是否正在说话 */
     @Volatile
     var isCurrentlySpeaking: Boolean = false
         private set
 
+    /** 回调：每次 RMS 更新时通知外部 */
+    var onRmsUpdate: ((Double) -> Unit)? = null
+
     @Synchronized
     fun processAudioData(data: ByteArray, sampleRate: Int) {
-        currentSampleRate = sampleRate
         val now = System.currentTimeMillis()
 
-        // 防抖：如果距离上一段结束时间不足 DEBOUNCE_MS，忽略所有音频
+        // 防抖
         if (!isSpeaking && lastSegmentEndTime > 0 && (now - lastSegmentEndTime) < DEBOUNCE_MS) {
             return
         }
@@ -67,10 +51,8 @@ class VoiceActivityDetector(private val listener: SpeechSegmentListener) {
         val rms = calculateRms(data)
         lastRms = rms
 
-        // 每5秒打印一次RMS日志（避免日志过多）
-        if (now % 5000 < 100) {
-            Log.d(TAG, "RMS=$rms, threshold=$SILENCE_THRESHOLD, speaking=$isSpeaking")
-        }
+        // 每次都通知外部更新 RMS（用于实时显示）
+        onRmsUpdate?.invoke(rms)
 
         if (rms > SILENCE_THRESHOLD) {
             lastSpeechTime = now
@@ -80,7 +62,7 @@ class VoiceActivityDetector(private val listener: SpeechSegmentListener) {
                 isCurrentlySpeaking = true
                 speechStartTime = now
                 audioBuffer = ByteArrayOutputStream()
-                Log.d(TAG, "语音开始 (RMS=$rms)")
+                Log.d(TAG, "语音开始 (RMS=$rms, 阈值=$SILENCE_THRESHOLD)")
                 listener.onSpeechStarted()
             }
 
@@ -106,10 +88,10 @@ class VoiceActivityDetector(private val listener: SpeechSegmentListener) {
 
         if (segmentDurationMs >= MIN_SEGMENT_MS) {
             val audioData = audioBuffer.toByteArray()
-            Log.d(TAG, "语音片段已提交 (${audioData.size} 字节, ${segmentDurationMs}ms)")
+            Log.d(TAG, "语音片段已提交 (${audioData.size} 字节)")
             listener.onSpeechSegment(audioData)
         } else {
-            Log.d(TAG, "语音片段过短 (${segmentDurationMs}ms < ${MIN_SEGMENT_MS}ms)，已丢弃")
+            Log.d(TAG, "语音片段过短，已丢弃")
         }
 
         audioBuffer = ByteArrayOutputStream()
@@ -124,37 +106,22 @@ class VoiceActivityDetector(private val listener: SpeechSegmentListener) {
             val low = data[i * 2].toInt() and 0xFF
             val high = data[i * 2 + 1].toInt()
             val sample = (high shl 8) or low
-            val signedSample = if (sample > Short.MAX_VALUE.toInt()) {
-                sample - 65536
-            } else {
-                sample
-            }
+            val signedSample = if (sample > Short.MAX_VALUE.toInt()) sample - 65536 else sample
             sum += signedSample.toDouble() * signedSample.toDouble()
         }
 
-        return if (sampleCount > 0) {
-            kotlin.math.sqrt(sum / sampleCount)
-        } else {
-            0.0
-        }
+        return if (sampleCount > 0) kotlin.math.sqrt(sum / sampleCount) else 0.0
     }
 
     @Synchronized
     fun reset() {
         if (isSpeaking) {
-            val now = System.currentTimeMillis()
-            endSpeechSegment(now)
+            endSpeechSegment(System.currentTimeMillis())
         }
-
         isSpeaking = false
         isCurrentlySpeaking = false
-        speechStartTime = 0L
-        lastSpeechTime = 0L
-        lastSegmentEndTime = 0L
-        currentSampleRate = 0
         audioBuffer = ByteArrayOutputStream()
-
-        Log.d(TAG, "VAD 状态已重置")
+        Log.d(TAG, "VAD 已重置")
     }
 }
 

@@ -26,7 +26,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
@@ -68,9 +67,7 @@ class AICompanionService : Service(), SpeechSegmentListener {
 
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
-    private var statusUpdateJob: Job? = null
 
-    // 记录最后一次转录文本，供悬浮窗点击时使用
     @Volatile
     private var lastTranscribedText: String = ""
 
@@ -91,6 +88,17 @@ class AICompanionService : Service(), SpeechSegmentListener {
         floatingWindow = FloatingWindow(this)
         userPreferences = UserPreferences(this)
         voiceActivityDetector = VoiceActivityDetector(this)
+
+        // 设置 RMS 实时更新回调
+        voiceActivityDetector.onRmsUpdate = { rms ->
+            val speaking = voiceActivityDetector.isCurrentlySpeaking
+            val status = if (speaking) {
+                "🎤 说话中 (音量:${"%.0f".format(rms)})"
+            } else {
+                "聆听中 (音量:${"%.0f".format(rms)})"
+            }
+            updateNotification(status)
+        }
 
         tts = TextToSpeech(this) { status ->
             if (status == TextToSpeech.SUCCESS) {
@@ -113,22 +121,7 @@ class AICompanionService : Service(), SpeechSegmentListener {
             }
         })
 
-        // 每2秒更新通知栏状态，方便用户确认App在工作
-        statusUpdateJob = serviceScope.launch {
-            while (true) {
-                delay(2000)
-                val rms = voiceActivityDetector.lastRms
-                val speaking = voiceActivityDetector.isCurrentlySpeaking
-                val status = if (speaking) {
-                    "🎤 检测到说话 (音量:${"%.0f".format(rms)})"
-                } else {
-                    "聆听中 (音量:${"%.0f".format(rms)})"
-                }
-                updateNotification(status)
-            }
-        }
-
-        Log.d(TAG, "服务已创建 (v2.1)")
+        Log.d(TAG, "服务已创建 (v2.1.2)")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -147,7 +140,6 @@ class AICompanionService : Service(), SpeechSegmentListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        statusUpdateJob?.cancel()
         audioRecorder.stopRecording()
         voiceActivityDetector.reset()
         floatingWindow.dismiss()
@@ -166,10 +158,9 @@ class AICompanionService : Service(), SpeechSegmentListener {
 
         serviceScope.launch {
             try {
-                // 1. 语音转文字
                 val result = speechToTextService.transcribe(audioData)
                 if (!result.success || result.text.isBlank()) {
-                    Log.d(TAG, "转录失败或结果为空: ${result.error}")
+                    Log.d(TAG, "转录失败: ${result.error}")
                     return@launch
                 }
 
@@ -177,12 +168,10 @@ class AICompanionService : Service(), SpeechSegmentListener {
                 lastTranscribedText = transcribedText
                 Log.d(TAG, "转录结果: $transcribedText")
 
-                // 2. 分析内容重要性
                 val analysis = contentAnalyzer.analyze(transcribedText)
-                Log.d(TAG, "内容分析: score=${analysis.score}, important=${analysis.isImportant}, reason=${analysis.reason}")
+                Log.d(TAG, "内容分析: score=${analysis.score}, important=${analysis.isImportant}")
 
                 if (analysis.isImportant) {
-                    // 3. 请求AI建议
                     val sceneContext = buildContextForAI()
                     val suggestion = aiService.generateSuggestion(
                         transcript = transcribedText,
@@ -191,13 +180,11 @@ class AICompanionService : Service(), SpeechSegmentListener {
 
                     if (suggestion.isNotEmpty() && !suggestion.startsWith("[")) {
                         showSuggestion(suggestion, isDeepExplanation = false)
-                        Log.d(TAG, "AI建议已显示: $suggestion")
+                        Log.d(TAG, "AI建议: $suggestion")
                     }
-                } else {
-                    Log.d(TAG, "内容不重要(score=${analysis.score})，跳过AI响应")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "处理语音片段时发生异常", e)
+                Log.e(TAG, "处理语音片段异常", e)
             }
         }
     }
@@ -219,9 +206,7 @@ class AICompanionService : Service(), SpeechSegmentListener {
         serviceScope.launch {
             try {
                 val sceneContext = buildContextForAI()
-                val detailedPrompt = "用户对以下内容感兴趣，希望获得详细解释。\n" +
-                    "原始内容: \"$text\"\n" +
-                    "请用中文详细解释，包含背景知识和实用建议。"
+                val detailedPrompt = "用户对以下内容感兴趣，希望获得详细解释。\n原始内容: \"$text\"\n请用中文详细解释。"
 
                 val explanation = aiService.generateSuggestion(
                     transcript = detailedPrompt,
@@ -234,7 +219,7 @@ class AICompanionService : Service(), SpeechSegmentListener {
 
                 contentAnalyzer.recordUserInteraction(text)
             } catch (e: Exception) {
-                Log.e(TAG, "生成深度解释时发生异常", e)
+                Log.e(TAG, "生成深度解释异常", e)
             }
         }
     }
@@ -257,9 +242,7 @@ class AICompanionService : Service(), SpeechSegmentListener {
     }
 
     private fun buildContextForAI(): String {
-        return "当前场景: 日常陪伴。" +
-            "你通过耳机麦克风聆听周围对话，提供简洁有用的建议。" +
-            "请保持回复简短（1-2句话），用中文回复。"
+        return "当前场景: 日常陪伴。你聆听周围对话，提供简洁建议。请用中文回复，最多2句话。"
     }
 
     private fun updateNotification(text: String) {

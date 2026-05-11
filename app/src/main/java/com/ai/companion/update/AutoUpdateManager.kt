@@ -32,7 +32,7 @@ class AutoUpdateManager(private val context: Context) {
     private var downloadId: Long = -1
     
     // Current app version - should match SettingsActivity.CURRENT_VERSION
-    private val currentVersion = "2.1.1"
+    private val currentVersion = "2.1.2"
     
     fun checkForUpdate(showNoUpdateDialog: Boolean = false) {
         CoroutineScope(Dispatchers.IO).launch {

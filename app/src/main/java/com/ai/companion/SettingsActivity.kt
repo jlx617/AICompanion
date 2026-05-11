@@ -26,7 +26,7 @@ class SettingsActivity : AppCompatActivity() {
         private const val KEY_SCENE_DETECTION = "scene_detection_enabled"
         
         // 当前版本号，每次发布新版本时更新
-        const val CURRENT_VERSION = "2.1.1"
+        const val CURRENT_VERSION = "2.1.2"
         const val GITHUB_RELEASES_URL = "https://github.com/jlx617/AICompanion/releases"
     }
 
