@@ -94,7 +94,7 @@ class AudioRecorder {
                                 }
                             }
                         }.apply {
-                            name = "AudioRecorderThread"
+                            setName("AudioRecorderThread")
                             start()
                         }
 
