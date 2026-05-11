@@ -150,20 +150,25 @@ class AICompanionService : Service() {
                 captureCount++
 
                 val audioData: ByteArray
+                var shouldSkip = false
+
                 synchronized(audioBuffer) {
                     if (audioBuffer.isEmpty()) {
                         Log.d(TAG, "第${captureCount}次采集: 无音频数据")
-                        continue
+                        shouldSkip = true
+                    } else {
+                        val totalSize = audioBuffer.sumOf { it.size }
+                        audioData = ByteArray(totalSize)
+                        var offset = 0
+                        for (chunk in audioBuffer) {
+                            System.arraycopy(chunk, 0, audioData, offset, chunk.size)
+                            offset += chunk.size
+                        }
+                        audioBuffer.clear()
                     }
-                    val totalSize = audioBuffer.sumOf { it.size }
-                    audioData = ByteArray(totalSize)
-                    var offset = 0
-                    for (chunk in audioBuffer) {
-                        System.arraycopy(chunk, 0, audioData, offset, chunk.size)
-                        offset += chunk.size
-                    }
-                    audioBuffer.clear()
                 }
+
+                if (shouldSkip) continue
 
                 Log.d(TAG, "第${captureCount}次采集: ${audioData.size} 字节，发送STT...")
                 updateNotification("正在识别语音...")
