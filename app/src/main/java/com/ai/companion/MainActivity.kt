@@ -1,7 +1,10 @@
 package com.ai.companion
 
 import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -31,6 +34,17 @@ class MainActivity : AppCompatActivity() {
         Manifest.permission.RECORD_AUDIO
     )
 
+    /** 用于接收服务状态广播 */
+    private val statusReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val status = intent.getStringExtra("status") ?: return
+            val message = intent.getStringExtra("message") ?: ""
+            runOnUiThread {
+                updateStatusDisplay(status, message)
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -40,6 +54,14 @@ class MainActivity : AppCompatActivity() {
 
         setupButtons()
         updateUI()
+
+        // 注册状态接收器
+        registerReceiver(statusReceiver, IntentFilter("com.ai.companion.STATUS_UPDATE"))
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(statusReceiver)
     }
 
     private fun setupButtons() {
@@ -47,7 +69,6 @@ class MainActivity : AppCompatActivity() {
             if (isServiceRunning) {
                 stopService()
             } else {
-                // 检查API密钥是否已配置
                 if (!isApiKeyConfigured()) {
                     Toast.makeText(this, R.string.api_key_not_configured, Toast.LENGTH_LONG).show()
                     openSettings()
@@ -75,6 +96,18 @@ class MainActivity : AppCompatActivity() {
         binding.btnCheckUpdate.setOnClickListener {
             autoUpdateManager.checkForUpdate(showNoUpdateDialog = true)
         }
+    }
+
+    private fun updateStatusDisplay(status: String, message: String) {
+        val displayText = when (status) {
+            "ready" -> "🟢 语音识别就绪"
+            "beginning" -> "🎤 检测到说话..."
+            "results" -> "✅ 识别到: $message"
+            "error" -> "❌ 错误: $message"
+            "end" -> "⏸️ 说话结束，准备下一次..."
+            else -> "🔄 $message"
+        }
+        binding.tvStatusLog.text = displayText
     }
 
     private fun isApiKeyConfigured(): Boolean {
@@ -105,7 +138,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (missingPermissions.isEmpty()) {
-            // 检查悬浮窗权限
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
                 val intent = Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -165,6 +197,7 @@ class MainActivity : AppCompatActivity() {
         isServiceRunning = true
         binding.btnStartStop.text = getString(R.string.stop_service)
         binding.tvInstructions.text = getString(R.string.service_running)
+        binding.tvStatusLog.text = "🔄 正在启动语音识别..."
         Toast.makeText(this, R.string.service_started, Toast.LENGTH_SHORT).show()
     }
 
@@ -173,6 +206,7 @@ class MainActivity : AppCompatActivity() {
         isServiceRunning = false
         binding.btnStartStop.text = getString(R.string.start_service)
         binding.tvInstructions.text = getString(R.string.usage_instructions)
+        binding.tvStatusLog.text = "已停止"
         Toast.makeText(this, R.string.service_stopped, Toast.LENGTH_SHORT).show()
     }
 

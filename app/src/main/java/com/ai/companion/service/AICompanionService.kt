@@ -134,6 +134,14 @@ class AICompanionService : Service() {
 
     // ==================== SpeechRecognizer 初始化 ====================
 
+    private fun sendStatus(status: String, message: String = "") {
+        val intent = Intent("com.ai.companion.STATUS_UPDATE").apply {
+            putExtra("status", status)
+            putExtra("message", message)
+        }
+        sendBroadcast(intent)
+    }
+
     private fun initSpeechRecognizer() {
         try {
             speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this)
@@ -141,11 +149,13 @@ class AICompanionService : Service() {
 
                 override fun onReadyForSpeech(params: Bundle?) {
                     Log.d(TAG, "语音识别就绪")
+                    sendStatus("ready", "准备就绪")
                     updateNotification("聆听中...")
                 }
 
                 override fun onBeginningOfSpeech() {
                     Log.d(TAG, "检测到说话")
+                    sendStatus("beginning", "检测到说话")
                     updateNotification("正在聆听...")
                 }
 
@@ -160,6 +170,7 @@ class AICompanionService : Service() {
 
                 override fun onEndOfSpeech() {
                     Log.d(TAG, "说话结束")
+                    sendStatus("end", "说话结束")
                     // 自动延迟后重新开始监听
                     serviceScope.launch {
                         delay(RESTART_DELAY_AFTER_END_MS)
@@ -183,6 +194,7 @@ class AICompanionService : Service() {
                         else -> "未知错误: $error"
                     }
                     Log.e(TAG, "语音识别错误: $errorMsg ($error)")
+                    sendStatus("error", errorMsg)
 
                     // 某些错误不需要重启（如正在说话时又调用了startListening）
                     if (error == SpeechRecognizer.ERROR_CLIENT) {
@@ -203,10 +215,12 @@ class AICompanionService : Service() {
                     if (!matches.isNullOrEmpty()) {
                         val text = matches[0]
                         Log.d(TAG, "识别结果: $text")
+                        sendStatus("results", text)
                         updateNotification("识别到: $text")
                         processTranscribedText(text)
                     } else {
                         Log.d(TAG, "识别结果为空")
+                        sendStatus("error", "识别结果为空")
                         updateNotification("聆听中...")
                     }
                 }
