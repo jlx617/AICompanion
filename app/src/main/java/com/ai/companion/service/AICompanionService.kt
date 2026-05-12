@@ -12,11 +12,9 @@ import android.os.IBinder
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import com.ai.companion.MainActivity
-import com.ai.companion.R
 import com.ai.companion.ai.AIService
 import com.ai.companion.ai.ContentAnalyzer
-import com.ai.companion.audio.VoskModelManager
-import com.ai.companion.audio.VoskSpeechRecognizer
+import com.ai.companion.audio.OnlineSpeechRecognizer
 import com.ai.companion.ui.FloatingWindow
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,12 +24,13 @@ import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
- * AI陪伴助手 v5.0 - 使用Vosk离线语音识别
+ * AI陪伴助手 v6.0 - 使用在线语音识别
  *
- * 专为华为/荣耀手机设计：
- * - 不依赖Google服务
- * - 完全离线语音识别
- * - 不需要网络和API密钥
+ * 特点：
+ * - 不需要下载模型
+ * - 使用 SiliconFlow Whisper API
+ * - 识别准确率高
+ * - 支持华为/荣耀手机
  */
 class AICompanionService : Service() {
 
@@ -59,7 +58,7 @@ class AICompanionService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + Job())
 
-    private var voskRecognizer: VoskSpeechRecognizer? = null
+    private var speechRecognizer: OnlineSpeechRecognizer? = null
     private var contentAnalyzer: ContentAnalyzer? = null
     private var aiService: AIService? = null
     private var floatingWindow: FloatingWindow? = null
@@ -98,14 +97,8 @@ class AICompanionService : Service() {
                 aiService = AIService(this@AICompanionService)
                 floatingWindow = FloatingWindow(this@AICompanionService)
 
-                // 检查Vosk模型
-                if (VoskModelManager.isModelDownloaded(this@AICompanionService)) {
-                    updateNotification("正在启动语音识别...")
-                    initVoskAndStart()
-                } else {
-                    updateNotification("需要下载语音模型(约50MB)")
-                    sendStatusBroadcast("need_model", "需要下载语音模型")
-                }
+                // 初始化语音识别
+                initSpeechRecognizer()
 
             } catch (e: Exception) {
                 Log.e(TAG, "初始化失败", e)
@@ -114,55 +107,48 @@ class AICompanionService : Service() {
         }
     }
 
-    private fun initVoskAndStart() {
-        voskRecognizer = VoskSpeechRecognizer(this)
-        voskRecognizer?.setListener(object : VoskSpeechRecognizer.SpeechRecognitionListener {
+    private fun initSpeechRecognizer() {
+        speechRecognizer = OnlineSpeechRecognizer(this)
+        speechRecognizer?.setListener(object : OnlineSpeechRecognizer.SpeechRecognitionListener {
             override fun onReady() {
-                Log.d(TAG, "Vosk准备就绪")
+                Log.d(TAG, "语音识别就绪")
                 sendStatusBroadcast("ready", "准备就绪")
                 updateNotification("聆听中... 请说话")
             }
 
-            override fun onPartialResult(text: String) {
-                Log.d(TAG, "部分结果: $text")
-                updateNotification("聆听中: $text")
+            override fun onSpeechStart() {
+                Log.d(TAG, "检测到说话")
+                sendStatusBroadcast("beginning", "检测到说话")
+                updateNotification("🎤 正在聆听...")
             }
 
-            override fun onFinalResult(text: String) {
-                Log.d(TAG, "最终结果: $text")
+            override fun onSpeechEnd() {
+                Log.d(TAG, "说话结束")
+                sendStatusBroadcast("end", "说话结束")
+                updateNotification("正在识别...")
+            }
+
+            override fun onResult(text: String) {
+                Log.d(TAG, "识别结果: $text")
                 sendStatusBroadcast("results", text)
                 updateNotification("识别到: $text")
                 processTranscribedText(text)
-
-                // 重新开始监听
-                serviceScope.launch {
-                    kotlinx.coroutines.delay(500)
-                    voskRecognizer?.startListening()
-                }
             }
 
             override fun onError(error: String) {
                 Log.e(TAG, "识别错误: $error")
                 sendStatusBroadcast("error", error)
                 updateNotification("错误: $error")
-
-                // 尝试重新启动
-                serviceScope.launch {
-                    kotlinx.coroutines.delay(2000)
-                    voskRecognizer?.startListening()
-                }
             }
         })
 
-        // 初始化模型并开始监听
-        voskRecognizer?.initModel { success, message ->
-            if (success) {
-                Log.d(TAG, "Vosk模型加载成功")
-                voskRecognizer?.startListening()
-            } else {
-                Log.e(TAG, "Vosk模型加载失败: $message")
-                updateNotification("模型加载失败: $message")
-            }
+        // 开始监听
+        val started = speechRecognizer?.startListening() ?: false
+        if (started) {
+            Log.d(TAG, "语音识别已启动")
+        } else {
+            Log.e(TAG, "语音识别启动失败")
+            updateNotification("语音识别启动失败")
         }
     }
 
@@ -170,7 +156,7 @@ class AICompanionService : Service() {
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy")
-        voskRecognizer?.destroy()
+        speechRecognizer?.destroy()
         floatingWindow?.dismiss()
         tts?.stop()
         tts?.shutdown()
