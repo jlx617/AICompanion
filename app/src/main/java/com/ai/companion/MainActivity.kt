@@ -56,7 +56,12 @@ class MainActivity : AppCompatActivity() {
         updateUI()
 
         // 注册状态接收器
-        registerReceiver(statusReceiver, IntentFilter("com.ai.companion.STATUS_UPDATE"))
+        val filter = IntentFilter("com.ai.companion.STATUS_UPDATE")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(statusReceiver, filter)
+        }
     }
 
     override fun onDestroy() {
