@@ -11,8 +11,13 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.ai.companion.audio.VoskModelManager
 import com.ai.companion.databinding.ActivityMainBinding
 import com.ai.companion.service.AICompanionService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
@@ -36,6 +41,15 @@ class MainActivity : AppCompatActivity() {
 
         setupButtons()
         updateUI()
+        checkModelStatus()
+    }
+
+    private fun checkModelStatus() {
+        if (VoskModelManager.isModelDownloaded(this)) {
+            binding.tvStatusLog.text = "语音模型已就绪"
+        } else {
+            binding.tvStatusLog.text = "需要下载语音模型(约50MB)"
+        }
     }
 
     private fun setupButtons() {
@@ -43,12 +57,18 @@ class MainActivity : AppCompatActivity() {
             if (isServiceRunning) {
                 stopService()
             } else {
+                // 检查模型是否已下载
+                if (!VoskModelManager.isModelDownloaded(this)) {
+                    downloadModel()
+                    return@setOnClickListener
+                }
+
                 if (!isApiKeyConfigured()) {
                     Toast.makeText(this, "请先配置API密钥", Toast.LENGTH_LONG).show()
                     openSettings()
                     return@setOnClickListener
                 }
-                
+
                 if (checkAndRequestPermissions()) {
                     startService()
                 }
@@ -61,6 +81,33 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnSettings.setOnClickListener {
             openSettings()
+        }
+    }
+
+    private fun downloadModel() {
+        binding.tvStatusLog.text = "正在下载语音模型..."
+        binding.btnStartStop.isEnabled = false
+
+        CoroutineScope(Dispatchers.Main).launch {
+            val result = VoskModelManager.downloadModel(this@MainActivity) { progress ->
+                runOnUiThread {
+                    binding.tvStatusLog.text = "下载中... $progress%"
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                binding.btnStartStop.isEnabled = true
+                result.fold(
+                    onSuccess = {
+                        binding.tvStatusLog.text = "模型下载完成！点击开始聆听"
+                        Toast.makeText(this@MainActivity, "语音模型下载完成", Toast.LENGTH_LONG).show()
+                    },
+                    onFailure = { e ->
+                        binding.tvStatusLog.text = "下载失败: ${e.message}"
+                        Toast.makeText(this@MainActivity, "下载失败: ${e.message}", Toast.LENGTH_LONG).show()
+                    }
+                )
+            }
         }
     }
 
@@ -172,5 +219,6 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateUI()
+        checkModelStatus()
     }
 }

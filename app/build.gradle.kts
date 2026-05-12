@@ -12,7 +12,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0"
+        versionName = "5.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -52,4 +52,7 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:2.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("com.google.code.gson:gson:2.10.1")
+
+    // Vosk 离线语音识别 - 不需要Google服务，适合华为手机
+    implementation("com.alphacephei:vosk-android:0.3.47")
 }
