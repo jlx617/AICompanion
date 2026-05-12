@@ -14,6 +14,7 @@ import androidx.core.content.ContextCompat
 import com.ai.companion.audio.VoskModelManager
 import com.ai.companion.databinding.ActivityMainBinding
 import com.ai.companion.service.AICompanionService
+import com.ai.companion.update.AutoUpdateManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -29,6 +30,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var isServiceRunning = false
+    private lateinit var autoUpdateManager: AutoUpdateManager
 
     private val requiredPermissions = arrayOf(
         Manifest.permission.RECORD_AUDIO
@@ -39,6 +41,7 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        autoUpdateManager = AutoUpdateManager(this)
         setupButtons()
         updateUI()
         checkModelStatus()
@@ -48,7 +51,7 @@ class MainActivity : AppCompatActivity() {
         if (VoskModelManager.isModelDownloaded(this)) {
             binding.tvStatusLog.text = "语音模型已就绪"
         } else {
-            binding.tvStatusLog.text = "需要下载语音模型(约50MB)"
+            binding.tvStatusLog.text = "首次使用需下载语音模型(约50MB)"
         }
     }
 
@@ -57,7 +60,6 @@ class MainActivity : AppCompatActivity() {
             if (isServiceRunning) {
                 stopService()
             } else {
-                // 检查模型是否已下载
                 if (!VoskModelManager.isModelDownloaded(this)) {
                     downloadModel()
                     return@setOnClickListener
@@ -81,6 +83,10 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnSettings.setOnClickListener {
             openSettings()
+        }
+
+        binding.btnCheckUpdate.setOnClickListener {
+            autoUpdateManager.checkForUpdate(showNoUpdateDialog = true)
         }
     }
 
